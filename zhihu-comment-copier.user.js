@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         知乎评论区一键复制
 // @namespace    https://github.com/EverChangAn/zhihu-comment-copier
-// @version      2.3.0
-// @description  知乎主页/回答页一键复制评论区：支持带序号/纯文本两种模式
+// @version      2.5.0
+// @description  知乎全站一键复制评论区（支持所有模块：问答/专栏/想法/主页/视频等），带序号/纯文本双模式
 // @author       EverChangAn
-// @match        https://www.zhihu.com/*
+// @include      https://*.zhihu.com/*
 // @grant        GM_setClipboard
 // @grant        GM_notification
 // @run-at       document-end
@@ -43,80 +43,46 @@
         } catch (e) { return false; }
     }
 
-    // ==================== 判断页面类型 ====================
-
-    function isAnswerPage() {
-        return /zhihu\.com\/question\/\d+\/answer\/\d+/.test(location.href);
-    }
-
-    function isHomePage() {
-        const url = location.href;
-        return /zhihu\.com\/?$/.test(url) || /zhihu\.com\/\?/.test(url) || /zhihu\.com\/follow/.test(url) || /zhihu\.com\/hot/.test(url);
-    }
-
-    function pageType() {
-        if (isAnswerPage()) return 'answer';
-        if (isHomePage()) return 'home';
-        return 'other';
-    }
-
     // ==================== 提取 ====================
 
     /**
-     * 获取问题标题
-     * - 回答页：.QuestionRichText > .QuestionHeader-detail > h1 > document.title
-     * - 主页：每个卡片的 .QuestionItem-title
+     * 通用标题获取 — 不区分页面类型，逐级回退
      */
-    function getQuestionTitle() {
-        const type = pageType();
+    function getTitle() {
+        // 1. 问题描述详情（问答页）
+        const qt = document.querySelector('.QuestionRichText .RichText');
+        if (qt) { const t = clean(qt.textContent); if (t && t.length > 3) return t; }
 
-        if (type === 'answer') {
-            // 回答页的标题获取（原有逻辑）
-            const qt = document.querySelector('.QuestionRichText .RichText');
-            if (qt) { const t = clean(qt.textContent); if (t && t.length > 3) return t; }
-            const qd = document.querySelector('.QuestionHeader-detail');
-            if (qd) { const t = clean(qd.textContent); if (t && t.length > 3) return t; }
-            const h1 = document.querySelector('h1.QuestionHeader-title');
-            if (h1) { const t = clean(h1.textContent); if (t && t.length > 3) return t; }
-            const dt = document.title.replace(/\s*[-–—|]\s*知乎.*$/i, '').trim();
-            return dt || null;
-        }
+        // 2. 问题详情
+        const qd = document.querySelector('.QuestionHeader-detail');
+        if (qd) { const t = clean(qd.textContent); if (t && t.length > 3) return t; }
 
-        if (type === 'home') {
-            // 主页：找到可视区域内第一个带评论的卡片的问题标题
-            // 先定位到有 CommentContent 的卡片
-            const commentEl = document.querySelector('div.CommentContent');
-            if (commentEl) {
-                // 向上查找包含这个评论的卡片容器
-                let card = commentEl.closest('[class*="ContentItem"]') 
-                        || commentEl.closest('[class*="Card"]')
-                        || commentEl.closest('[class*="item"]');
-                if (card) {
-                    // 在卡片内找问题标题
-                    const titleEl = card.querySelector('.QuestionItem-title')
-                                 || card.querySelector('[class*="QuestionItem"] a')
-                                 || card.querySelector('h2 a')
-                                 || card.querySelector('h2');
-                    if (titleEl) {
-                        const t = clean(titleEl.textContent);
-                        if (t && t.length > 3) return t;
-                    }
-                }
-            }
-            // 兜底：页面标题
-            const dt = document.title.replace(/\s*[-–—|]\s*知乎.*$/i, '').trim();
-            return dt || null;
-        }
+        // 3. 问题标题 h1
+        const qh1 = document.querySelector('h1.QuestionHeader-title');
+        if (qh1) { const t = clean(qh1.textContent); if (t && t.length > 3) return t; }
 
-        return null;
+        // 4. 专栏文章标题
+        const postTitle = document.querySelector('h1.Post-Title')
+                       || document.querySelector('h1.Article-Title')
+                       || document.querySelector('[class*="Post-Title"]')
+                       || document.querySelector('[class*="Article-Title"]');
+        if (postTitle) { const t = clean(postTitle.textContent); if (t && t.length > 3) return t; }
+
+        // 5. 任意 h1（想法页、视频页等）
+        const h1 = document.querySelector('h1');
+        if (h1) { const t = clean(h1.textContent); if (t && t.length > 3 && !t.includes('知乎')) return t; }
+
+        // 6. 兜底：document.title，去掉 " - 知乎" 后缀
+        const dt = document.title.replace(/\s*[-–—|]\s*知乎.*$/i, '').trim();
+        return dt || null;
     }
 
     /**
-     * 获取评论 — div.CommentContent 在回答页和主页通用
+     * 通用评论提取 — div.CommentContent 在所有模块完全一致
      */
     function getComments() {
         const divs = document.querySelectorAll('div.CommentContent');
-        log(`🔍 找到 ${divs.length} 个 div.CommentContent (页面类型: ${pageType()})`);
+        log(`🔍 找到 ${divs.length} 个 div.CommentContent`);
 
         const skipPatterns = [
             '理性发言，友善互动',
@@ -275,7 +241,7 @@
                 <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
             </svg>`;
 
-        const title = getQuestionTitle();
+        const title = getTitle();
         const comments = getComments();
 
         const text = mode === 'numbered'
@@ -325,11 +291,7 @@
 
     // ==================== 初始化 ====================
 
-    function isSupportedPage() {
-        return isAnswerPage() || isHomePage();
-    }
-
-    function waitForComments(ms = 12000) {
+    function waitForComments(ms = 15000) {
         const start = Date.now();
         return new Promise(resolve => {
             const check = () => {
@@ -337,25 +299,20 @@
                     log(`⏱️ 评论区就绪 (${Date.now() - start}ms)`);
                     resolve(true);
                 } else if (Date.now() - start > ms) {
-                    log('⚠️ 等待超时');
+                    log('⏭️ 无评论区，跳过');
                     resolve(false);
-                } else setTimeout(check, 400);
+                } else setTimeout(check, 500);
             };
             check();
         });
     }
 
     async function init() {
-        if (!isSupportedPage()) {
-            log('⏭️ 不支持此页面');
-            return;
-        }
+        const found = await waitForComments();
+        if (!found) return;  // 页面没有评论区就不显示按钮
 
-        log(`🔍 页面类型: ${pageType()}`);
-
-        await waitForComments();
         createButton();
-        log('✅ 就绪');
+        log('✅ 按钮就绪');
 
         let last = location.href;
         const onUrl = () => {
@@ -364,7 +321,10 @@
             const el = document.getElementById('zhihu-copy-root');
             if (el) el.remove();
             subMenuVisible = false;
-            setTimeout(async () => { if (isSupportedPage()) { await waitForComments(); createButton(); } }, 1500);
+            setTimeout(async () => {
+                const f = await waitForComments();
+                if (f) createButton();
+            }, 1500);
         };
         ['pushState', 'replaceState'].forEach(m => {
             const orig = history[m];
@@ -373,7 +333,7 @@
         window.addEventListener('popstate', onUrl);
     }
 
-    log('📦 v2.3 加载中...');
+    log('📦 v2.5 加载中...');
     document.readyState === 'loading'
         ? document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1000))
         : setTimeout(init, 1000);
