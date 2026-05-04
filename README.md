@@ -1,6 +1,5 @@
 2. README.md
 
-
 # 知乎评论区一键复制
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -21,7 +20,6 @@
 ## 📸 效果演示
 
 点击右下角紫色按钮：
-
     ┌──────┐
     │  📋  │  ← 点击
     └──────┘
@@ -32,6 +30,7 @@
 └─────────────┘
 
 复制结果示例（带序号）：
+
 
 
 ## 📥 安装
