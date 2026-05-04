@@ -1,18 +1,17 @@
 // ==UserScript==
 // @name         知乎评论区一键复制
 // @namespace    https://github.com/EverChangAn/zhihu-comment-copier
-// @version      2.2.0
-// @description  知乎回答页一键复制评论区：支持带序号/纯文本两种模式
+// @version      2.3.0
+// @description  知乎主页/回答页一键复制评论区：支持带序号/纯文本两种模式
 // @author       EverChangAn
-// @match        https://www.zhihu.com/question/*
-// @match        https://www.zhihu.com/answer/*
+// @match        https://www.zhihu.com/*
 // @grant        GM_setClipboard
 // @grant        GM_notification
 // @run-at       document-end
 // @license      MIT
-// @supportURL   https://github.com/你的用户名/zhihu-comment-copier/issues
-// @downloadURL  https://github.com/你的用户名/zhihu-comment-copier/raw/main/zhihu-comment-copier.user.js
-// @updateURL    https://github.com/你的用户名/zhihu-comment-copier/raw/main/zhihu-comment-copier.user.js
+// @supportURL   https://github.com/EverChangAn/zhihu-comment-copier/issues
+// @downloadURL  https://github.com/EverChangAn/zhihu-comment-copier/raw/main/zhihu-comment-copier.user.js
+// @updateURL    https://github.com/EverChangAn/zhihu-comment-copier/raw/main/zhihu-comment-copier.user.js
 // ==/UserScript==
 
 (function () {
@@ -44,22 +43,80 @@
         } catch (e) { return false; }
     }
 
-    // ==================== 提取 ====================
+    // ==================== 判断页面类型 ====================
 
-    function getQuestionTitle() {
-        const qt = document.querySelector('.QuestionRichText .RichText');
-        if (qt) { const t = clean(qt.textContent); if (t && t.length > 3) return t; }
-        const qd = document.querySelector('.QuestionHeader-detail');
-        if (qd) { const t = clean(qd.textContent); if (t && t.length > 3) return t; }
-        const h1 = document.querySelector('h1.QuestionHeader-title');
-        if (h1) { const t = clean(h1.textContent); if (t && t.length > 3) return t; }
-        const dt = document.title.replace(/\s*[-–—|]\s*知乎.*$/i, '').trim();
-        return dt || null;
+    function isAnswerPage() {
+        return /zhihu\.com\/question\/\d+\/answer\/\d+/.test(location.href);
     }
 
+    function isHomePage() {
+        const url = location.href;
+        return /zhihu\.com\/?$/.test(url) || /zhihu\.com\/\?/.test(url) || /zhihu\.com\/follow/.test(url) || /zhihu\.com\/hot/.test(url);
+    }
+
+    function pageType() {
+        if (isAnswerPage()) return 'answer';
+        if (isHomePage()) return 'home';
+        return 'other';
+    }
+
+    // ==================== 提取 ====================
+
+    /**
+     * 获取问题标题
+     * - 回答页：.QuestionRichText > .QuestionHeader-detail > h1 > document.title
+     * - 主页：每个卡片的 .QuestionItem-title
+     */
+    function getQuestionTitle() {
+        const type = pageType();
+
+        if (type === 'answer') {
+            // 回答页的标题获取（原有逻辑）
+            const qt = document.querySelector('.QuestionRichText .RichText');
+            if (qt) { const t = clean(qt.textContent); if (t && t.length > 3) return t; }
+            const qd = document.querySelector('.QuestionHeader-detail');
+            if (qd) { const t = clean(qd.textContent); if (t && t.length > 3) return t; }
+            const h1 = document.querySelector('h1.QuestionHeader-title');
+            if (h1) { const t = clean(h1.textContent); if (t && t.length > 3) return t; }
+            const dt = document.title.replace(/\s*[-–—|]\s*知乎.*$/i, '').trim();
+            return dt || null;
+        }
+
+        if (type === 'home') {
+            // 主页：找到可视区域内第一个带评论的卡片的问题标题
+            // 先定位到有 CommentContent 的卡片
+            const commentEl = document.querySelector('div.CommentContent');
+            if (commentEl) {
+                // 向上查找包含这个评论的卡片容器
+                let card = commentEl.closest('[class*="ContentItem"]') 
+                        || commentEl.closest('[class*="Card"]')
+                        || commentEl.closest('[class*="item"]');
+                if (card) {
+                    // 在卡片内找问题标题
+                    const titleEl = card.querySelector('.QuestionItem-title')
+                                 || card.querySelector('[class*="QuestionItem"] a')
+                                 || card.querySelector('h2 a')
+                                 || card.querySelector('h2');
+                    if (titleEl) {
+                        const t = clean(titleEl.textContent);
+                        if (t && t.length > 3) return t;
+                    }
+                }
+            }
+            // 兜底：页面标题
+            const dt = document.title.replace(/\s*[-–—|]\s*知乎.*$/i, '').trim();
+            return dt || null;
+        }
+
+        return null;
+    }
+
+    /**
+     * 获取评论 — div.CommentContent 在回答页和主页通用
+     */
     function getComments() {
         const divs = document.querySelectorAll('div.CommentContent');
-        log(`🔍 找到 ${divs.length} 个 div.CommentContent`);
+        log(`🔍 找到 ${divs.length} 个 div.CommentContent (页面类型: ${pageType()})`);
 
         const skipPatterns = [
             '理性发言，友善互动',
@@ -268,8 +325,8 @@
 
     // ==================== 初始化 ====================
 
-    function isAnswerPage() {
-        return /zhihu\.com\/question\/\d+\/answer\/\d+/.test(location.href);
+    function isSupportedPage() {
+        return isAnswerPage() || isHomePage();
     }
 
     function waitForComments(ms = 12000) {
@@ -280,6 +337,7 @@
                     log(`⏱️ 评论区就绪 (${Date.now() - start}ms)`);
                     resolve(true);
                 } else if (Date.now() - start > ms) {
+                    log('⚠️ 等待超时');
                     resolve(false);
                 } else setTimeout(check, 400);
             };
@@ -288,10 +346,16 @@
     }
 
     async function init() {
-        if (!isAnswerPage()) return;
+        if (!isSupportedPage()) {
+            log('⏭️ 不支持此页面');
+            return;
+        }
+
+        log(`🔍 页面类型: ${pageType()}`);
 
         await waitForComments();
         createButton();
+        log('✅ 就绪');
 
         let last = location.href;
         const onUrl = () => {
@@ -300,7 +364,7 @@
             const el = document.getElementById('zhihu-copy-root');
             if (el) el.remove();
             subMenuVisible = false;
-            setTimeout(async () => { if (isAnswerPage()) { await waitForComments(); createButton(); } }, 1500);
+            setTimeout(async () => { if (isSupportedPage()) { await waitForComments(); createButton(); } }, 1500);
         };
         ['pushState', 'replaceState'].forEach(m => {
             const orig = history[m];
@@ -309,6 +373,7 @@
         window.addEventListener('popstate', onUrl);
     }
 
+    log('📦 v2.3 加载中...');
     document.readyState === 'loading'
         ? document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1000))
         : setTimeout(init, 1000);
